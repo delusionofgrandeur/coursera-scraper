@@ -7,7 +7,7 @@
     ".": "./dist/batch-down.js"
   },
   "bin": {
-    "coursera-dl": "./dist/cli.js"
+    "coursera-dl": "dist/cli.js"
   },
   "files": [
     "dist",
