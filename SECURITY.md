@@ -14,6 +14,8 @@ Please do not open a public issue for security problems involving:
 
 Instead, contact the maintainer privately and include:
 
+- private contact: `discord: sipayisko`
+
 - a short description of the issue
 - reproduction steps
 - impact assessment

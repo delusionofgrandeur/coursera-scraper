@@ -2,17 +2,9 @@
 
 An unofficial Coursera scraper/downloader CLI for Node.js.
 
-This project is unofficial and provided for educational and personal offline-use scenarios only.
 This project is not affiliated with, endorsed by, or sponsored by Coursera.
 
 It uses a locally saved Coursera session, validates `coursera.org/learn/...` URLs, discovers course/module/lesson links, extracts video or reading content, and writes the results to local `downloads/` folders. Internally, it uses Playwright for browser-driven login, navigation, and response interception.
-
-## Security posture
-
-- Session state is stored outside the repository in `~/.coursera-scraper/auth.json`.
-- Downloaded filenames and folders are sanitized before being written to disk.
-- Downloads are restricted to `https://` URLs, block localhost/private-network targets, cap redirects, and enforce a 2 GB per-file limit.
-- Parallel downloads are capped to reduce accidental rate spikes.
 
 ## Requirements
 
@@ -41,16 +33,22 @@ Or use the direct download entry point:
 npm run download "https://www.coursera.org/learn/course-slug/home/welcome"
 ```
 
+## Security posture
+
+- Session state is stored outside the repository in `~/.coursera-scraper/auth.json`.
+- Downloaded filenames and folders are sanitized before being written to disk.
+- Downloads are restricted to `https://` URLs, block localhost/private-network targets, cap redirects, and enforce a 2 GB per-file limit.
+- Parallel downloads are capped to reduce accidental rate spikes.
+
 ## Responsible use
 
-- Only access content you are enrolled in and legally allowed to download.
-- Use this repository for educational research and personal offline access workflows only.
-- Do not commit `auth.json`, exported course files, screenshots, or debug dumps.
-- Review [SECURITY.md](SECURITY.md) before opening issues that may involve sensitive data.
+- Only access content you are enrolled in and allowed to access.
+- Do not commit `auth.json`, screenshots, course exports, or debug dumps.
+- Check [SECURITY.md](SECURITY.md) before opening issues.
 
 ## Open source caveats
 
-The repository is technically safer after hardening, but publishing a public downloader for a proprietary learning platform can still carry policy, copyright, and trademark risk. Before making the repository public, review:
+The repository is technically safer after hardening, but publishing a public downloader for a proprietary learning platform can still carry policy, copyright, and trademark risk. This README does not hide this fact. Before making the repository public, review:
 
 - Coursera Terms of Use
 - any local copyright exceptions or fair-use assumptions you are relying on
