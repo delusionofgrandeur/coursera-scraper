@@ -1,8 +1,0 @@
-src/
-.github/
-downloads/
-auth.json
-eslint.config.js
-tsconfig.json
-.gitignore
-.prettierrc
