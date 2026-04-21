@@ -28,36 +28,85 @@ It uses a locally saved Coursera session, validates `coursera.org/learn/...` URL
 
 ## Install
 
-Install from npm:
+### Install from npm
+
+1. Install the CLI globally:
 
 ```bash
 npm install -g coursera-scraper
-npx playwright install chrome
 ```
 
-Install from source:
+2. Install the Chrome browser that Playwright will launch:
 
 ```bash
-npm install
-npx playwright install chrome
-npm run build
+npx -y playwright install chrome
 ```
 
-## Usage
-
-Start the interactive CLI:
+3. Start the CLI:
 
 ```bash
 coursera-dl
 ```
 
-When running from a source checkout:
+### Install from source
+
+1. Install project dependencies:
+
+```bash
+npm install
+```
+
+2. Install the Chrome browser that Playwright will launch:
+
+```bash
+npx playwright install chrome
+```
+
+3. Build the TypeScript sources:
+
+```bash
+npm run build
+```
+
+4. Start the CLI:
 
 ```bash
 npm run cli
 ```
 
-Or use the direct download entry point:
+## First run
+
+1. Run the CLI:
+
+```bash
+coursera-dl
+```
+
+2. Choose the authentication flow when prompted and sign in through the opened browser.
+
+3. After login, run the CLI again and paste a course URL such as:
+
+```bash
+https://www.coursera.org/learn/course-slug/home/welcome
+```
+
+4. The downloader will save output under the local `downloads/` folder.
+
+## Usage
+
+Interactive CLI:
+
+```bash
+coursera-dl
+```
+
+Interactive CLI from a source checkout:
+
+```bash
+npm run cli
+```
+
+Direct download entry point from a source checkout:
 
 ```bash
 npm run download "https://www.coursera.org/learn/course-slug/home/welcome"
