@@ -1,8 +1,23 @@
-# coursera-scraper
+<p align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/e/e5/Coursera_logo.svg" alt="Coursera Logo" width="300" />
+</p>
 
-An unofficial Coursera scraper/downloader CLI for Node.js.
+<h1 align="center">coursera-scraper 🚀</h1>
 
-This project is not affiliated with, endorsed by, or sponsored by Coursera.
+<p align="center">
+  <strong>An unofficial Coursera scraper/downloader CLI for Node.js.</strong>
+</p>
+
+<p align="center">
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 18+"></a>
+  <a href="https://playwright.dev"><img src="https://img.shields.io/badge/Playwright-Enabled-2EAD33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://github.com/your-username/coursera-scraper/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-800080?style=for-the-badge" alt="License"></a>
+</p>
+
+<hr>
+
+> ⚠️ **Disclaimer:** This project is **not affiliated with, endorsed by, or sponsored by Coursera**.
 
 It uses a locally saved Coursera session, validates `coursera.org/learn/...` URLs, discovers course/module/lesson links, extracts video or reading content, and writes the results to local `downloads/` folders. Internally, it uses Playwright for browser-driven login, navigation, and response interception.
 
@@ -13,6 +28,15 @@ It uses a locally saved Coursera session, validates `coursera.org/learn/...` URL
 
 ## Install
 
+Install from npm:
+
+```bash
+npm install -g coursera-scraper
+npx playwright install chrome
+```
+
+Install from source:
+
 ```bash
 npm install
 npx playwright install chrome
@@ -22,6 +46,12 @@ npm run build
 ## Usage
 
 Start the interactive CLI:
+
+```bash
+coursera-dl
+```
+
+When running from a source checkout:
 
 ```bash
 npm run cli

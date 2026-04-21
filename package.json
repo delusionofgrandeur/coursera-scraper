@@ -7,9 +7,10 @@
     ".": "./dist/batch-down.js"
   },
   "bin": {
-    "coursera-dl": "dist/cli.js"
+    "coursera-dl": "bin/coursera-dl.js"
   },
   "files": [
+    "bin",
     "dist",
     "README.md",
     "LICENSE",
@@ -20,7 +21,8 @@
     "lint": "eslint \"src/**/*.ts\"",
     "audit:prod": "npm audit --omit=dev",
     "scan:sensitive": "node scripts/scan-sensitive.js",
-    "prepublishOnly": "npm run build",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run scan:sensitive && npm run lint",
     "start": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
     "download": "tsx src/download.ts",
@@ -51,8 +53,7 @@
     "@inquirer/prompts": "^8.4.2",
     "cli-progress": "^3.12.0",
     "p-limit": "^3.1.0",
-    "playwright": "^1.59.1",
-    "ts-node": "^10.9.2"
+    "playwright": "^1.59.1"
   },
   "devDependencies": {
     "@types/cli-progress": "^3.11.6",
