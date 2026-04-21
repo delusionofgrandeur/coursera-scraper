@@ -1,0 +1,19 @@
+node_modules/
+dist/
+downloads/
+
+# Local auth/session data
+auth.json
+apollo-state.json
+coursera_results.json
+api-endpoints.txt
+diagnostic_*.txt
+diagnostic_*.png
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
