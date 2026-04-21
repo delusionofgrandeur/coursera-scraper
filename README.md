@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/e/e5/Coursera_logo.svg" alt="Coursera Logo" width="300" />
+  <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=700&size=45&pause=1000&color=0056D2&center=true&vCenter=true&width=600&height=100&lines=Coursera+CLI;Offline+Learning;Batch+Downloader" alt="Typing SVG Banner" />
 </p>
 
 <h1 align="center">coursera-scraper 🚀</h1>

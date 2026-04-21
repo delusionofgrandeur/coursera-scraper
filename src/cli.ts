@@ -10,10 +10,12 @@ import { MAX_CONCURRENCY, validateCourseraUrl } from './security.js';
 const drawHeader = () => {
   console.clear();
   console.log();
-  console.log(chalk.bold.hex('#0056D2')(' ╭───────────────────────────────────────────────────╮'));
-  console.log(chalk.bold.hex('#0056D2')(' │ ') + chalk.bgHex('#0056D2').white.bold('              COURSERA DOWNLOADER              ') + chalk.bold.hex('#0056D2')(' │'));
-  console.log(chalk.bold.hex('#0056D2')(' ╰───────────────────────────────────────────────────╯'));
-  console.log(chalk.dim('   An unofficial, high-performance offline learning tool\n'));
+  console.log(chalk.cyanBright.bold('   ______                                        ____ __  '));
+  console.log(chalk.cyanBright.bold('  / ____/___  __  ___________  _________        / __ \\ / '));
+  console.log(chalk.cyanBright.bold(' / /   / __ \\/ / / / ___/ ___// _ \\/ ___/______/ / / / /   '));
+  console.log(chalk.cyanBright.bold('/ /___/ /_/ / /_/ / /  (__  )/  __/ /  /_____/ /_/ / /___ '));
+  console.log(chalk.cyanBright.bold('\\____/\\____/\\__/_/_/  /____/ \\___/_/        /_____/_____/ '));
+  console.log(chalk.blue('                                      batch module downloader\n'));
 };
 
 async function main(): Promise<void> {

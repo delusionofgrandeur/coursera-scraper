@@ -1,6 +1,6 @@
 {
   "name": "coursera-scraper",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Unofficial Coursera scraper/downloader CLI for Node.js.",
   "main": "dist/batch-down.js",
   "exports": {
