@@ -47,12 +47,13 @@
   },
   "homepage": "https://github.com/delusionofgrandeur/coursera-scraper#readme",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.4.2",
     "chalk": "^5.6.2",
     "cli-progress": "^3.12.0",
+    "ora": "^9.3.0",
     "p-limit": "^3.1.0",
     "playwright": "^1.59.1"
   },

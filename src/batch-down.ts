@@ -4,6 +4,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import pLimit from 'p-limit';
 import cliProgress from 'cli-progress';
+import ora from 'ora';
 import {
   clampConcurrency,
   downloadToFile,
@@ -33,17 +34,18 @@ export async function runBatchDownload(targetUrl: string, concurrency = 3): Prom
   }
 
   const effectiveConcurrency = clampConcurrency(concurrency);
+  const scanSpinner = ora({ text: chalk.blueBright('Waking up browser & secure context...'), color: 'cyan' }).start();
+  
   const browser = await chromium.launch({
     headless: true,
     channel: 'chrome',
   });
 
   try {
-    console.log(chalk.cyanBright('\n[session] Starting Coursera browser context...'));
     const context = await browser.newContext({ storageState: authPath });
     const indexPage = await context.newPage();
 
-    console.log('[scan] Loading course page and indexing lessons...');
+    scanSpinner.text = chalk.blueBright('Loading course metadata and compiling module map...');
     await indexPage.goto(validatedTargetUrl.toString(), {
       waitUntil: 'networkidle',
       timeout: 60_000,
@@ -52,12 +54,13 @@ export async function runBatchDownload(targetUrl: string, concurrency = 3): Prom
 
     const resolvedUrl = indexPage.url();
     if (validatedTargetUrl.pathname.includes('/home/') && !resolvedUrl.includes('/home/')) {
-      console.log(chalk.red('\nAccess check failed: Coursera redirected the page.'));
-      console.log(`Requested: ${validatedTargetUrl.toString()}`);
-      console.log(`Resolved:  ${resolvedUrl}`);
-      console.log('\nThis usually means either the course is not enrolled on this account or the saved auth session is stale.');
+      scanSpinner.fail(chalk.red('Access check failed: Coursera redirected the page (potential auth issue or course not enrolled).'));
+      console.log(chalk.gray(`\n  Requested: ${validatedTargetUrl.toString()}`));
+      console.log(chalk.gray(`  Resolved:  ${resolvedUrl}\n`));
       return;
     }
+
+    scanSpinner.succeed(chalk.green('Successfully attached to course map. Extracting endpoints...'));
 
     const weekLinks = await indexPage.evaluate(() => {
       return Array.from(document.querySelectorAll('a'))
@@ -128,12 +131,14 @@ export async function runBatchDownload(targetUrl: string, concurrency = 3): Prom
     await indexPage.close();
 
     const uniqueItems = Array.from(new Map(items.map((item) => [item.url, item])).values());
-    console.log(`\nIndexed ${uniqueItems.length} unique course items.`);
-
+    
     if (uniqueItems.length === 0) {
-      console.log('No downloadable items were found for this page.');
+      scanSpinner.fail(chalk.yellow('Module scan complete, but zero content items were discovered.'));
       return;
     }
+
+    scanSpinner.succeed(chalk.green(`Scan complete. Indexed ${uniqueItems.length} unique downloadable item(s).`));
+    console.log();
 
     const multibar = new cliProgress.MultiBar(
       {

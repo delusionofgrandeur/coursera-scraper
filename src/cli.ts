@@ -1,29 +1,36 @@
 #!/usr/bin/env node
 import { select, input } from '@inquirer/prompts';
 import chalk from 'chalk';
+import ora from 'ora';
 import { authenticate } from './auth.js';
 import { runBatchDownload } from './batch-down.js';
 import { MAX_CONCURRENCY, validateCourseraUrl } from './security.js';
 
-async function main(): Promise<void> {
+// ASCII Header Configuration
+const drawHeader = () => {
   console.clear();
-  console.log(chalk.blue.bold('================================='));
-  console.log(chalk.cyan.bold('   Coursera CLI Downloader'));
-  console.log(chalk.blue.bold('=================================\n'));
-  console.log(chalk.gray('Unofficial tool for educational and personal offline-use scenarios only.\n'));
+  console.log();
+  console.log(chalk.bold.hex('#0056D2')(' ╭───────────────────────────────────────────────────╮'));
+  console.log(chalk.bold.hex('#0056D2')(' │ ') + chalk.bgHex('#0056D2').white.bold('              COURSERA DOWNLOADER              ') + chalk.bold.hex('#0056D2')(' │'));
+  console.log(chalk.bold.hex('#0056D2')(' ╰───────────────────────────────────────────────────╯'));
+  console.log(chalk.dim('   An unofficial, high-performance offline learning tool\n'));
+};
+
+async function main(): Promise<void> {
+  drawHeader();
 
   const action = await select({
-    message: 'What would you like to do?',
+    message: chalk.magenta('◈') + ' What would you like to do?',
     choices: [
       {
-        name: 'Login and refresh session',
+        name: 'Login & Refresh Session',
         value: 'auth',
-        description: 'Sign in with your Coursera account and save a local session.',
+        description: 'Sign in with your Coursera account to capture a browser session cookies.',
       },
       {
-        name: 'Download course content',
+        name: 'Download Course Content',
         value: 'download',
-        description: 'Download course materials with guarded concurrency and path validation.',
+        description: 'Provide a course URL to download all available video and text modules.',
       },
       {
         name: 'Exit',
@@ -33,66 +40,81 @@ async function main(): Promise<void> {
   });
 
   if (action === 'exit') {
-    console.log('Goodbye.');
+    console.log(chalk.gray('\n» Goodbye. ✨\n'));
     process.exit(0);
   }
 
   if (action === 'auth') {
-    console.log(chalk.yellow('\n--- Starting login flow ---'));
+    console.log();
+    const spinner = ora({
+      text: chalk.blueBright('Starting secure browser for authentication...'),
+      color: 'cyan',
+    }).start();
+
     try {
+      spinner.stop(); // Stop before launching browser so it doesn't collide
       await authenticate();
+      console.log();
+      spinner.succeed(chalk.green('Session tokens successfully updated and saved locally.'));
     } catch {
-      console.error(chalk.red('Login did not complete successfully.'));
+      console.log();
+      spinner.fail(chalk.red('Authentication flow was interrupted or failed.'));
     }
 
+    // Brief pause to read
+    await new Promise((r) => setTimeout(r, 1500));
     await main();
     return;
   }
 
-  console.log(chalk.yellow('\n--- Before you download ---'));
-  console.log(chalk.gray('1. Only use content you are enrolled in and allowed to access.'));
-  console.log(chalk.gray('2. This project is unofficial and is not affiliated with Coursera.'));
-  console.log(chalk.gray('3. If Coursera recently redirected or access changed, refresh the saved session first.'));
-  console.log(chalk.gray(`4. Concurrency is capped at ${MAX_CONCURRENCY} to reduce accidental rate spikes.\n`));
+  console.log(chalk.yellow('\n⚠ Security & Usage Posture'));
+  console.log(chalk.dim('│ ') + chalk.gray('1. Only access content you are explicitly enrolled in.'));
+  console.log(chalk.dim('│ ') + chalk.gray('2. This tool is fully unofficial and not affiliated with Coursera.'));
+  console.log(chalk.dim('│ ') + chalk.gray(`3. Concurrency is rigidly capped at ${MAX_CONCURRENCY} to prevent rate limit bans.`));
+  console.log('');
 
   const courseUrl = await input({
-    message: 'Course, week, or lesson URL:',
+    message: chalk.blueBright('❯') + ' Enter Course, Module, or Video URL:',
     validate: (value) => {
       try {
         validateCourseraUrl(value);
         return true;
       } catch (error) {
-        return error instanceof Error ? error.message : 'Enter a valid https://www.coursera.org/learn/... URL.';
+        return error instanceof Error ? error.message : 'Please enter a valid https://www.coursera.org/learn/... link.';
       }
     },
   });
 
   const activeConcurrent = await input({
-    message: `How many files should download in parallel? (1-${MAX_CONCURRENCY}, default: 3)`,
+    message: chalk.blueBright('❯') + ` Maximum parallel downloads (1-${MAX_CONCURRENCY}, default: 3):`,
     default: '3',
     validate: (value) => {
       const numericValue = Number(value);
       if (!Number.isInteger(numericValue) || numericValue < 1 || numericValue > MAX_CONCURRENCY) {
-        return `Enter a whole number between 1 and ${MAX_CONCURRENCY}.`;
+        return `Please specify a whole number between 1 and ${MAX_CONCURRENCY}.`;
       }
-
       return true;
     },
   });
 
-  console.log(chalk.cyan('\n--- Starting downloader ---\n'));
+  console.log('');
+  const initSpinner = ora({ text: chalk.blueBright('Initializing browser engine & security checks...'), color: 'cyan' }).start();
+
   try {
+    initSpinner.succeed(chalk.green('Engine fully initialized. Booting batch protocols.'));
     await runBatchDownload(courseUrl, Number(activeConcurrent));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(chalk.red(message));
+    initSpinner.fail(chalk.red('Critical error encountered starting batch sequence.'));
+    console.error(chalk.redBright('\n✘ ' + message));
   }
 
+  console.log();
   const again = await select({
-    message: 'Return to the menu?',
+    message: chalk.magenta('◈') + ' Sequence complete. Do you want to return to the main menu?',
     choices: [
-      { name: 'Yes', value: true },
-      { name: 'No, exit', value: false },
+      { name: 'Yes, back to main', value: true },
+      { name: 'No, exit terminal', value: false },
     ],
   });
 
@@ -102,6 +124,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('Unexpected error:', error);
+  console.error(chalk.bgRed.white('\n FATAL ERROR '), error);
   process.exit(1);
 });

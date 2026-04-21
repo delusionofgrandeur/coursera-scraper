@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 18+"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 20+"></a>
   <a href="https://playwright.dev"><img src="https://img.shields.io/badge/Playwright-Enabled-2EAD33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://github.com/your-username/coursera-scraper/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-800080?style=for-the-badge" alt="License"></a>
@@ -23,7 +23,7 @@ It uses a locally saved Coursera session, validates `coursera.org/learn/...` URL
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+
 - Google Chrome installed for Playwright's `channel: "chrome"` launch mode
 
 ## Install
