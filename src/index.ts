@@ -2,6 +2,13 @@ import { chromium } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 
+interface CourseSearchResult {
+  title: string;
+  partner: string;
+  rating: string;
+  link: string;
+}
+
 async function runScraper() {
   console.log('Starting Coursera scraper...');
   
@@ -22,20 +29,20 @@ async function runScraper() {
   try {
     // Coursera often uses ul with product cards
     await page.waitForSelector('ul[data-e2e="Search-Results-List"], .cds-ProductCard-container', { timeout: 15000 });
-  } catch (err) {
+  } catch {
     console.log('Could not find standard result list. Attempting to parse whatever is on the page...');
   }
 
   // Evaluate the page and extract course information
   console.log('Extracting course data...');
-  const courses = await page.evaluate(() => {
-    const results: any[] = [];
+  const courses = await page.evaluate((): CourseSearchResult[] => {
+    const results: CourseSearchResult[] = [];
     
     // Find all links that represent a course, specialization, or professional certificate
     // They typically have a parent wrapper which acts as a card
     const listItems = document.querySelectorAll('.cds-ProductCard-base, [data-e2e="ProductCard"]');
     
-    listItems.forEach(item => {
+    listItems.forEach((item) => {
       // Title
       const titleEl = item.querySelector('h3, .cds-ProductCard-header');
       const title = titleEl ? (titleEl as HTMLElement).innerText.trim() : 'No title';
@@ -50,7 +57,7 @@ async function runScraper() {
       
       // Link
       const linkEl = item.querySelector('a');
-      let link = linkEl ? linkEl.getAttribute('href') : '';
+      let link = linkEl ? linkEl.getAttribute('href') ?? '' : '';
       if (link && !link.startsWith('http')) {
         link = 'https://www.coursera.org' + link;
       }

@@ -1,54 +1,47 @@
 import { chromium } from 'playwright';
-import * as path from 'path';
-import * as os from 'os';
 import * as readline from 'readline';
-import fs from 'fs';
 import chalk from 'chalk';
+import { getAuthPath, saveStorageStateSecurely } from './security.js';
 
 const rl = readline.createInterface({
   input: process.stdin,
-  output: process.stdout
+  output: process.stdout,
 });
 
 const askQuestion = (query: string): Promise<string> => {
-  return new Promise(resolve => rl.question(query, resolve));
+  return new Promise((resolve) => rl.question(query, resolve));
 };
 
-export async function authenticate() {
+export async function authenticate(): Promise<void> {
   console.log('Starting headed browser for authentication...');
-  
-  // Launch the browser using the globally installed Chrome to bypass Google's "browser not secure" blockage
-  const browser = await chromium.launch({ 
+
+  const browser = await chromium.launch({
     headless: false,
     channel: 'chrome',
-    args: ['--disable-blink-features=AutomationControlled']
   });
-  const context = await browser.newContext();
-  const page = await context.newPage();
 
-  console.log(chalk.cyan('Navigating to Coursera login...'));
-  await page.goto('https://www.coursera.org/?authMode=login', { waitUntil: 'domcontentloaded' });
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
 
-  console.log('====================================================');
-  console.log('LÜTFEN AÇILAN TARAYICIDA COURSERA HESABINIZA GİRİŞ YAPIN.');
-  console.log('Giriş yaptıktan ve anasayfa yüklendikten sonra...');
-  console.log('====================================================');
+    console.log(chalk.cyan('Navigating to Coursera login...'));
+    await page.goto('https://www.coursera.org/?authMode=login', { waitUntil: 'domcontentloaded' });
 
-  await askQuestion('GİRİŞİ TAMAMLADIKTAN SONRA ENTER TUŞUNA BASIN: ');
+    console.log('====================================================');
+    console.log('Complete the login flow in the opened browser window.');
+    console.log('Press Enter only after the Coursera homepage has fully loaded.');
+    console.log('====================================================');
 
-  const configDir = path.join(os.homedir(), '.coursera-scraper');
-  if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true });
+    await askQuestion('Press Enter after login is complete: ');
+
+    const authPath = getAuthPath();
+    console.log('Saving your local session state...');
+    await saveStorageStateSecurely(context, authPath);
+
+    console.log(`Done. Session state saved to ${authPath}.`);
+    console.log('Keep this file private. It should never be committed or shared.');
+  } finally {
+    await browser.close().catch(() => undefined);
+    rl.close();
   }
-  const authPath = path.join(configDir, 'auth.json');
-  
-  console.log('Oturum bilgileriniz kaydediliyor...');
-  await context.storageState({ path: authPath });
-
-  console.log(`Bitti! Oturum bilgileri ${authPath} adresine kaydedildi.`);
-  console.log('Artık indirme scriptini kapatmadan çalıştırabilirsiniz.');
-
-  await browser.close();
-  rl.close();
 }
-

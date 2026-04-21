@@ -1,7 +1,8 @@
 src/
 .github/
-.eslintrc.json
-.prettierrc
-tsconfig.json
 downloads/
 auth.json
+eslint.config.js
+tsconfig.json
+.gitignore
+.prettierrc

@@ -1,22 +1,51 @@
 {
   "name": "coursera-scraper",
   "version": "1.0.0",
-  "description": "",
-  "main": "dist/index.js",
+  "description": "An unofficial educational-use CLI for exporting Coursera course materials you are authorized to access.",
+  "main": "dist/batch-down.js",
+  "exports": {
+    ".": "./dist/batch-down.js"
+  },
   "bin": {
     "coursera-dl": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
   "scripts": {
     "build": "rimraf dist && tsc",
+    "lint": "eslint \"src/**/*.ts\"",
+    "audit:prod": "npm audit --omit=dev",
+    "scan:sensitive": "node scripts/scan-sensitive.js",
     "prepublishOnly": "npm run build",
     "start": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
     "download": "tsx src/download.ts",
     "cli": "tsx src/cli.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "coursera",
+    "playwright",
+    "cli",
+    "downloader",
+    "educational"
+  ],
+  "author": "delusionofgrandeur",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/delusionofgrandeur/coursera-scraper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/delusionofgrandeur/coursera-scraper/issues"
+  },
+  "homepage": "https://github.com/delusionofgrandeur/coursera-scraper#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@inquirer/prompts": "^8.4.2",
     "cli-progress": "^3.12.0",

@@ -1,79 +1,68 @@
-<p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/e/e5/Coursera_logo.svg" alt="Coursera Logo" width="300" />
-</p>
+# coursera-scraper
 
-<h1 align="center">Coursera CLI Downloader 🚀</h1>
+A CLI for locally exporting Coursera course materials you are already authorized to access.
 
-<p align="center">
-  <strong>Fast, concurrent, API-driven Coursera course downloader with progress bars.</strong>
-  <br>
-  <a href="https://github.com/delusionofgrandeur/coursera-scraper/issues">Report Bug</a>
-  ·
-  <a href="https://github.com/delusionofgrandeur/coursera-scraper/issues">Request Feature</a>
-</p>
+This project is unofficial and provided for educational and personal offline-use scenarios only.
+This project is not affiliated with, endorsed by, or sponsored by Coursera.
 
----
+## Security posture
 
-## ⚡ Features
+- Session state is stored outside the repository in `~/.coursera-scraper/auth.json`.
+- Downloaded filenames and folders are sanitized before being written to disk.
+- Downloads are restricted to `https://` URLs, block localhost/private-network targets, cap redirects, and enforce a 2 GB per-file limit.
+- Parallel downloads are capped to reduce accidental rate spikes.
 
-- **Blazing Fast**: Uses `p-limit` and Node streams for parallel downloading (up to X active connections).
-- **Apollo State & API Interception**: Bypasses basic DOM scraping limitations by fetching directly from Coursera's Apollo state and internal APIs.
-- **Auto Hierarchy Organization**: Files are grouped neatly under `downloads/COURSE_NAME/Week_XX/01_module_name.mp4`.
-- **Text & Readings Extraction**: Converts text-based lectures (`rc-CML`) to `.txt` files directly.
-- **Beautiful CLI Experience**: Uses `cli-progress`, `@inquirer/prompts`, and `chalk` for a visually pleasing menu and multi-bar progress tracker (including real-time ETA & Mbps speeds).
-- **HTTP 302 Redirect Support**: Automatically resolves secure AWS S3 / Cloudfront redirects for video files.
+## Requirements
 
----
+- Node.js 18+
+- Google Chrome installed for Playwright's `channel: "chrome"` launch mode
 
-## 🛠 Prerequisites
+## Install
 
-- Node.js (v18 or higher)
-- NPM
-
-## 📦 Installation
-
-To install globally on your machine:
 ```bash
-npm install -g coursera-scraper
+npm install
+npx playwright install chrome
+npm run build
 ```
 
-*Note: You may need to run `npx playwright install chrome` on first setup to download the headless browser drivers.*
+## Usage
 
-## 🚀 Usage
+Start the interactive CLI:
 
-Simply run the following command anywhere in your terminal:
 ```bash
-coursera-dl
+npm run cli
 ```
 
-**Workflow:**
-1. Select **"🔑 Oturum Aç (Login)"** from the interactive menu. A browser will open for you to log into Coursera.
-2. Select **"⚡ Batch İndirme Başlat"** to begin downloading.
-3. Paste the URL of your enrolled course (e.g., `https://www.coursera.org/learn/algebra/home/welcome`). You can also paste specific week links or video URLs.
+Or use the direct download entry point:
 
-> **Note:** The authentication session is saved to `~/.coursera-scraper/auth.json`. You only need to log in once!
+```bash
+npm run download "https://www.coursera.org/learn/course-slug/home/welcome"
+```
 
-## ⚙️ How It Works
-1. Identifies the `__APOLLO_STATE__` to find the exact structure (modules, item IDs, types).
-2. Intercepts Coursera's `onDemandLectureVideos.v1` API to gather MP4 links.
-3. Renders and extracts textual information via Playwright for reading assignments.
+## Responsible use
 
----
+- Only access content you are enrolled in and legally allowed to download.
+- Use this repository for educational research and personal offline access workflows only.
+- Do not commit `auth.json`, exported course files, screenshots, or debug dumps.
+- Review [SECURITY.md](SECURITY.md) before opening issues that may involve sensitive data.
 
-## 🤝 Contributing
+## Open source caveats
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+The repository is technically safer after hardening, but publishing a public downloader for a proprietary learning platform can still carry policy, copyright, and trademark risk. Before making the repository public, review:
 
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.
+- Coursera Terms of Use
+- any local copyright exceptions or fair-use assumptions you are relying on
+- whether the project name and README wording imply affiliation
 
----
+## Development
 
-## ⚠️ Disclaimer & Legal
+```bash
+npm run scan:sensitive
+npm run lint
+npm run build
+npm run audit:prod
+```
 
-This tool is strictly provided for **personal, offline educational use and backup purposes only**. Downloading content you do not own or have rights to may violate the [Coursera Terms of Service](https://www.coursera.org/about/terms). The authors of this script hold no liability for how it is used. **Use at your own risk.**
+## License
 
----
-
-## 📜 License
-
-Distributed under the MIT License. See `LICENSE` for more information.
+MIT. See [LICENSE](LICENSE).

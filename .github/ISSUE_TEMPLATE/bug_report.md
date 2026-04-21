@@ -15,6 +15,8 @@ A clear and concise description of what you expected to happen.
 **Screenshots / Terminal Output**
 If applicable, paste the terminal error here.
 
+Do not include `auth.json`, cookies, signed media URLs, or private course content.
+
 **Environment (please complete the following information):**
  - OS: [e.g. Windows 11, Ubuntu 22.04]
  - Node.js version [e.g. 18.17.0]

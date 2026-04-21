@@ -1,312 +1,332 @@
-import { chromium } from 'playwright';
+import { chromium, type Page, type Response } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import chalk from 'chalk';
-import * as https from 'https';
 import pLimit from 'p-limit';
 import cliProgress from 'cli-progress';
+import {
+  clampConcurrency,
+  downloadToFile,
+  ensureDir,
+  getAuthPath,
+  resolveSafePath,
+  sanitizePathSegment,
+  validateCourseraUrl,
+} from './security.js';
 
-const downloadFile = (url: string, dest: string, bar: cliProgress.SingleBar | null = null): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const doReq = (reqUrl: string) => {
-      https.get(reqUrl, (response) => {
-        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          return doReq(response.headers.location); // Follow redirects
-        }
-        
-        const totalSize = parseInt(response.headers['content-length'] || '0', 10);
-        if (bar && totalSize) {
-          bar.start(totalSize, 0, { speed: '0 MB/s' });
-        }
-        
-        let downloaded = 0;
-        let lastTime = Date.now();
-        let lastDownloaded = 0;
-        const file = fs.createWriteStream(dest);
-
-        response.on('data', (chunk) => {
-          downloaded += chunk.length;
-          if (bar && totalSize) {
-            const now = Date.now();
-            if (now - lastTime >= 500) {
-              const speed = ((downloaded - lastDownloaded) / (now - lastTime)) * 1000;
-              const mbps = (speed / (1024 * 1024)).toFixed(2);
-              bar.update(downloaded, { speed: `${mbps} MB/s` });
-              lastTime = now;
-              lastDownloaded = downloaded;
-            } else {
-              bar.update(downloaded); // Update pure chunks without speed jitter
-            }
-          }
-        });
-
-        response.pipe(file);
-        
-        file.on('finish', () => {
-          file.close();
-          if (bar) {
-            bar.update(totalSize || downloaded);
-            bar.stop();
-          }
-          resolve();
-        });
-      }).on('error', (err) => {
-        fs.unlink(dest, () => {});
-        if (bar) bar.stop();
-        reject(err);
-      });
-    };
-    doReq(url);
-  });
+type ApolloWindow = Window & {
+  __APOLLO_STATE__?: unknown;
 };
 
-export async function runBatchDownload(targetUrl: string, concurrency: number = 3) {
-  const configDir = path.join(os.homedir(), '.coursera-scraper');
-  const authPath = path.join(configDir, 'auth.json');
+interface CourseItem {
+  url: string;
+  folderName: string;
+  order: number;
+}
+
+export async function runBatchDownload(targetUrl: string, concurrency = 3): Promise<void> {
+  const validatedTargetUrl = validateCourseraUrl(targetUrl);
+  const authPath = getAuthPath();
+
   if (!fs.existsSync(authPath)) {
-    throw new Error(chalk.red('HATA: auth.json bulunamadı. Lütfen önce "Oturum Aç" işlemini gerçekleştirin.'));
+    throw new Error('Missing auth state. Run the login flow first so the tool can reuse your Coursera session.');
   }
 
-  console.log(chalk.cyanBright('\n[API] Tarayıcı Context Başlatılıyor...'));
-  const browser = await chromium.launch({ 
+  const effectiveConcurrency = clampConcurrency(concurrency);
+  const browser = await chromium.launch({
     headless: true,
     channel: 'chrome',
-    args: ['--disable-blink-features=AutomationControlled']
-  });
-  const context = await browser.newContext({ storageState: authPath });
-
-  // 1. Fetching all items fast
-  console.log('[API] Modül Haritası Çıkartılıyor (Sayfa Yükleniyor)...');
-  const indexPage = await context.newPage();
-  
-  // Go to the URL
-  await indexPage.goto(targetUrl, { waitUntil: 'networkidle', timeout: 60000 });
-  await indexPage.waitForTimeout(4000);
-
-  // Finding all weeks or directly finding lecture links if user provided a specific week
-  const initialUrl = indexPage.url();
-  if (targetUrl.includes('/home/') && !initialUrl.includes('/home/')) {
-    console.log('\n❌ KRİTİK HATA: Coursera sayfayı yönlendirdi!');
-    console.log(`Gitmeye çalıştığınız: ${targetUrl}`);
-    console.log(`Gittiğimiz: ${initialUrl}`);
-    console.log('\n--- NEDEN OLDU? ---');
-    console.log('1. Bu kursa hesabınız üzerinden kayıt(Enroll) olmadınız.');
-    console.log('2. Kendi tarayıcınızdan kayıt oldunuz ancak programın kullandığı "auth.json" çerez (cookie) dosyası eski kaldı!');
-    console.log('\n👉 ÇÖZÜM: Lütfen programı kapatıp terminale "npm run auth" yazarak sisteme bir kere daha girip oturumunuzu (çerezleri) tazeleyin!\n');
-    await browser.close();
-    return;
-  }
-
-  interface CourseItem {
-    url: string;
-    folderName: string;
-    order: number;
-  }
-
-  const weekLinks = await indexPage.evaluate(() => {
-    return Array.from(document.querySelectorAll('a'))
-      .map(a => a.href)
-      .filter(href => href.includes('/home/week/') || href.includes('/home/module/'))
-      .filter((v, i, a) => a.indexOf(v) === i); // unique
   });
 
-  const allItems: CourseItem[] = [];
+  try {
+    console.log(chalk.cyanBright('\n[session] Starting Coursera browser context...'));
+    const context = await browser.newContext({ storageState: authPath });
+    const indexPage = await context.newPage();
 
-  if (weekLinks.length === 0) {
-    // If specific video/reading is given
-    const directItems = await indexPage.evaluate(() => {
-      return Array.from(document.querySelectorAll('a'))
-        .map(a => a.href)
-        .filter(href => href.includes('/lecture/') || href.includes('/supplement/') || href.includes('/item/'))
-        .filter((v, i, a) => a.indexOf(v) === i);
+    console.log('[scan] Loading course page and indexing lessons...');
+    await indexPage.goto(validatedTargetUrl.toString(), {
+      waitUntil: 'networkidle',
+      timeout: 60_000,
     });
-    
-    let orderIndex = 1;
-    for (const url of directItems) {
-      allItems.push({ url, folderName: 'Bagimsiz_Icerikler', order: orderIndex++ });
+    await indexPage.waitForTimeout(4_000);
+
+    const resolvedUrl = indexPage.url();
+    if (validatedTargetUrl.pathname.includes('/home/') && !resolvedUrl.includes('/home/')) {
+      console.log(chalk.red('\nAccess check failed: Coursera redirected the page.'));
+      console.log(`Requested: ${validatedTargetUrl.toString()}`);
+      console.log(`Resolved:  ${resolvedUrl}`);
+      console.log('\nThis usually means either the course is not enrolled on this account or the saved auth session is stale.');
+      return;
     }
-    
-    console.log('Uyarı: Sayfada birden fazla haftaya ait link bulunamadı.');
-    console.log('Bu normal olabilir (Eğer direkt bir videonun veya belli bir haftanın linkini verdiyseniz).');
-  } else {
-    console.log(`Toplam ${weekLinks.length} farklı hafta tespit edildi. Tüm haftalar taranarak indeksleniyor...`);
-    
-    let weekCount = 1;
-    for (const weekUrl of weekLinks) {
-      if (weekUrl !== indexPage.url()) {
-        await indexPage.goto(weekUrl, { waitUntil: 'networkidle', timeout: 60000 });
-        await indexPage.waitForTimeout(3000); // Render beklemesi
-      }
-      
-      const folderName = `Hafta_${weekCount.toString().padStart(2, '0')}`;
-      
-      // Try to get item titles from the DOM directly to ensure exact sequence matching, but fallback to just href extraction
-      const items = await indexPage.evaluate(() => {
+
+    const weekLinks = await indexPage.evaluate(() => {
+      return Array.from(document.querySelectorAll('a'))
+        .map((anchor) => anchor.href)
+        .filter((href) => href.includes('/home/week/') || href.includes('/home/module/'))
+        .filter((href, index, all) => all.indexOf(href) === index);
+    });
+
+    const items: CourseItem[] = [];
+
+    if (weekLinks.length === 0) {
+      const directItems = await indexPage.evaluate(() => {
         return Array.from(document.querySelectorAll('a'))
-          .map(a => a.href)
-          .filter(href => href.includes('/lecture/') || href.includes('/supplement/') || href.includes('/item/'))
-          .filter((v, i, a) => a.indexOf(v) === i);
+          .map((anchor) => anchor.href)
+          .filter((href) => href.includes('/lecture/') || href.includes('/supplement/') || href.includes('/item/'))
+          .filter((href, index, all) => all.indexOf(href) === index);
       });
 
-      let orderIndex = 1;
-      for (const url of items) {
-        allItems.push({ url, folderName, order: orderIndex++ });
+      let order = 1;
+      for (const itemUrl of directItems) {
+        const safeUrl = toSafeCourseraUrl(itemUrl);
+        if (!safeUrl) {
+          continue;
+        }
+
+        items.push({ url: safeUrl, folderName: 'standalone_items', order: order++ });
       }
-      
-      weekCount++;
+    } else {
+      console.log(`Found ${weekLinks.length} modules. Indexing all downloadable items...`);
+
+      let weekIndex = 1;
+      for (const weekUrl of weekLinks) {
+        const safeWeekUrl = toSafeCourseraUrl(weekUrl);
+        if (!safeWeekUrl) {
+          continue;
+        }
+
+        if (safeWeekUrl !== indexPage.url()) {
+          await indexPage.goto(safeWeekUrl, {
+            waitUntil: 'networkidle',
+            timeout: 60_000,
+          });
+          await indexPage.waitForTimeout(3_000);
+        }
+
+        const folderName = `week_${weekIndex.toString().padStart(2, '0')}`;
+        const weekItems = await indexPage.evaluate(() => {
+          return Array.from(document.querySelectorAll('a'))
+            .map((anchor) => anchor.href)
+            .filter((href) => href.includes('/lecture/') || href.includes('/supplement/') || href.includes('/item/'))
+            .filter((href, index, all) => all.indexOf(href) === index);
+        });
+
+        let order = 1;
+        for (const itemUrl of weekItems) {
+          const safeItemUrl = toSafeCourseraUrl(itemUrl);
+          if (!safeItemUrl) {
+            continue;
+          }
+
+          items.push({ url: safeItemUrl, folderName, order: order++ });
+        }
+
+        weekIndex++;
+      }
     }
-  }
 
-  await indexPage.close();
+    await indexPage.close();
 
-  // Deduplicate items maintaining their categorized structure
-  const uniqueItemsMap = new Map<string, CourseItem>();
-  for (const item of allItems) {
-    if (!uniqueItemsMap.has(item.url)) {
-      uniqueItemsMap.set(item.url, item);
+    const uniqueItems = Array.from(new Map(items.map((item) => [item.url, item])).values());
+    console.log(`\nIndexed ${uniqueItems.length} unique course items.`);
+
+    if (uniqueItems.length === 0) {
+      console.log('No downloadable items were found for this page.');
+      return;
     }
-  }
-  const uniqueItems = Array.from(uniqueItemsMap.values());
-  
-  console.log(`\n✅ Harita Hazır! Modüllere ayrılmış toplam ${uniqueItems.length} ders içeriği bulundu.\n`);
 
-  if (uniqueItems.length === 0) {
-    console.log('İndirilecek içerik bulunamadı. Bağlantınızı kontrol edin.');
-    await browser.close();
-    return;
-  }
+    const multibar = new cliProgress.MultiBar(
+      {
+        clearOnComplete: false,
+        hideCursor: true,
+        format: '{filename} | {bar} | {percentage}% | {value}/{total} bytes | Speed: {speed} | ETA: {eta}s',
+        barCompleteChar: '\u2588',
+        barIncompleteChar: '\u2591',
+      },
+      cliProgress.Presets.shades_classic,
+    );
 
-  // Setup Progress bar
-  const multibar = new cliProgress.MultiBar({
-    clearOnComplete: false,
-    hideCursor: true,
-    format: '{filename} | {bar} | {percentage}% | {value}/{total} bytes | Hız: {speed} | ETA: {eta}s',
-    barCompleteChar: '\u2588',
-    barIncompleteChar: '\u2591',
-  }, cliProgress.Presets.shades_classic);
+    const mainBar = multibar.create(uniqueItems.length, 0, {
+      filename: 'overall progress'.padEnd(30, ' '),
+      speed: '-',
+      value: 0,
+      total: uniqueItems.length,
+    });
+    (mainBar as cliProgress.SingleBar & { format?: string }).format =
+      '{filename} | {bar} | {percentage}% | {value}/{total} tasks | ETA: {eta}s';
 
-  // Main task bar
-  const mainBar = multibar.create(uniqueItems.length, 0, { 
-    filename: '🎯 GENEL İLERLEME'.padEnd(30, ' '),
-    speed: '-',
-    value: 0,
-    total: uniqueItems.length
-  });
-  
-  // Custom format specifically for main bar to override bytes with tasks
-  (mainBar as any).format = '{filename} | {bar} | {percentage}% | {value}/{total} Görev | ETA: {eta}s';
+    const courseSlug = validatedTargetUrl.pathname.split('/')[2] ?? 'course';
+    const downloadDir = resolveSafePath(path.join(process.cwd(), 'downloads'), courseSlug);
+    ensureDir(downloadDir);
 
-  const courseSlug = new URL(targetUrl).pathname.split('/')[2] || 'course';
-  const downloadDir = path.join(process.cwd(), 'downloads', courseSlug);
+    if (effectiveConcurrency !== concurrency) {
+      console.log(`Using concurrency ${effectiveConcurrency} (requested ${concurrency}).`);
+    }
 
-  // Setup concurrent limiter
-  const limit = pLimit(concurrency);
+    const limit = pLimit(effectiveConcurrency);
+    const tasks = uniqueItems.map((item) => limit(async () => {
+      const page = await context.newPage();
 
-  const fetchItemTask = async (item: CourseItem) => {
-    const page = await context.newPage();
-    try {
-      // Create specific category directory
-      const itemDir = path.join(downloadDir, item.folderName);
-      if (!fs.existsSync(itemDir)) fs.mkdirSync(itemDir, { recursive: true });
+      try {
+        const itemDir = resolveSafePath(downloadDir, item.folderName);
+        ensureDir(itemDir);
 
-      // 1. Set up API Interception BEFORE navigation (Professional XHR sniff)
-      const videoApiPromise = page.waitForResponse(
-        (res) => res.url().includes('onDemandLectureVideos.v1') || res.url().includes('onDemandVideos.v1'),
-        { timeout: 15000 }
-      ).catch(() => null);
+        const videoApiPromise = page
+          .waitForResponse(
+            (response) =>
+              response.url().includes('onDemandLectureVideos.v1') ||
+              response.url().includes('onDemandVideos.v1'),
+            { timeout: 15_000 },
+          )
+          .catch(() => null);
 
-      await page.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(3000); // IMPORTANT: Give React/Apollo time to render supplements
-      
-      let pageTitle = await page.title();
-      // Clean Coursera suffix
-      pageTitle = pageTitle.replace(' | Coursera', '');
-      const safeTitle = pageTitle.replace(/[^a-z0-9ğüşıöç]/gi, '_').toLowerCase();
-      
-      const fileNamePrefix = `${String(item.order).padStart(2, '0')}_${safeTitle.substring(0, 50)}`;
+        await page.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await page.waitForTimeout(3_000);
 
-      if (item.url.includes('/lecture/') || item.url.includes('/item/')) {
-        let videoSrc: string | null = null;
+        const pageTitle = sanitizePathSegment(
+          (await page.title()).replace(' | Coursera', ''),
+          'lesson',
+          50,
+        );
+        const fileNamePrefix = `${String(item.order).padStart(2, '0')}_${pageTitle}`;
 
-        // Try getting video from intercepted API (Fast & Reliable)
-        const videoResponse = await videoApiPromise;
-        if (videoResponse && videoResponse.ok()) {
-          try {
-            const data = await videoResponse.json();
-            // Try to recursively find a string containing .mp4
-            const findMp4 = (obj: any): string | null => {
-              if (typeof obj === 'string' && obj.includes('.mp4') && obj.startsWith('http')) return obj;
-              if (typeof obj === 'object' && obj !== null) {
-                for (const key of Object.keys(obj)) {
-                  const result = findMp4(obj[key]);
-                  if (result) return result;
-                }
+        if (item.url.includes('/lecture/') || item.url.includes('/item/')) {
+          const videoUrl = await findVideoUrl(page, videoApiPromise);
+
+          if (!videoUrl) {
+            const notePath = resolveSafePath(itemDir, `${fileNamePrefix}.txt`);
+            fs.writeFileSync(notePath, 'Video URL could not be resolved for this lesson.', 'utf-8');
+            return;
+          }
+
+          const filePath = resolveSafePath(itemDir, `${fileNamePrefix}.mp4`);
+          const label = fileNamePrefix.slice(0, 27).padEnd(30, ' ');
+          const fileBar = multibar.create(100, 0, {
+            filename: `video ${label}`,
+            speed: '0 MB/s',
+          });
+
+          await downloadToFile(videoUrl, filePath, {
+            onStart: (totalBytes) => {
+              if (totalBytes > 0) {
+                fileBar.start(totalBytes, 0, { speed: '0 MB/s' });
               }
-              return null;
-            };
-            videoSrc = findMp4(data);
-          } catch (e) {
-            // ignore API json parse error
+            },
+            onProgress: (downloadedBytes, totalBytes, speedLabel) => {
+              fileBar.update(totalBytes > 0 ? downloadedBytes : 0, { speed: speedLabel });
+            },
+            onFinish: (downloadedBytes, totalBytes) => {
+              if (fileBar.isActive) {
+                fileBar.update(totalBytes > 0 ? totalBytes : downloadedBytes, { speed: 'done' });
+                fileBar.stop();
+              }
+            },
+            onError: () => {
+              if (fileBar.isActive) {
+                fileBar.stop();
+              }
+            },
+          });
+          return;
+        }
+
+        if (item.url.includes('/supplement/')) {
+          const readingText = await page.evaluate(() => {
+            const content = document.querySelector('.rc-CML, .rc-ReadingItem, #main, [data-e2e="ReadingItem"]');
+            return content ? (content as HTMLElement).innerText : '';
+          });
+
+          if (readingText) {
+            const filePath = resolveSafePath(itemDir, `${fileNamePrefix}.txt`);
+            fs.writeFileSync(filePath, readingText, 'utf-8');
           }
         }
-
-        // 2. Try Apollo State (Backup API data already in page memory)
-        if (!videoSrc) {
-          videoSrc = await page.evaluate(() => {
-            if (typeof window !== 'undefined' && (window as any).__APOLLO_STATE__) {
-              const apollo = (window as any).__APOLLO_STATE__;
-              const jsonStr = JSON.stringify(apollo);
-              const match = jsonStr.match(/https:\/\/[^"']+\.mp4[^"']*/);
-              if (match) return match[0];
-            }
-            return null;
-          });
-        }
-
-        // 3. Try DOM Parsing (Legacy fallback)
-        if (!videoSrc) {
-          videoSrc = await page.evaluate(() => {
-            const video = document.querySelector('video');
-            if (video && video.src && video.src.includes('mp4')) return video.src;
-            const source = document.querySelector('video source[type="video/mp4"]');
-            return source ? (source as HTMLSourceElement).src : null;
-          });
-        }
-
-        if (videoSrc) {
-          const filePath = path.join(itemDir, `${fileNamePrefix}.mp4`);
-          // Create a specific bar for this file
-          const label = fileNamePrefix.substring(0, 27).padEnd(30, ' ');
-          const fileBar = multibar.create(100, 0, { filename: `▶ ${label}`, speed: '0 MB/s' });
-          await downloadFile(videoSrc, filePath, fileBar);
-        } else {
-          // If a video page explicitly has no video, we store a note
-          const filePath = path.join(itemDir, `${fileNamePrefix}.txt`);
-          fs.writeFileSync(filePath, "Video linki yakalanamadı veya API reddedildi.", 'utf-8');
-        }
-      } else if (item.url.includes('/supplement/')) {
-        const readingText = await page.evaluate(() => {
-          const content = document.querySelector('.rc-CML, .rc-ReadingItem, #main, [data-e2e="ReadingItem"]');
-          return content ? (content as HTMLElement).innerText : '';
-        });
-        if (readingText) {
-          const filePath = path.join(itemDir, `${fileNamePrefix}.txt`);
-          fs.writeFileSync(filePath, readingText, 'utf-8');
-        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(`Failed to process ${item.url}: ${message}`));
+      } finally {
+        mainBar.increment();
+        await page.close().catch(() => undefined);
       }
-    } catch (e) {
-      // ignore
-    } finally {
-      mainBar.increment();
-      await page.close();
+    }));
+
+    await Promise.all(tasks);
+    multibar.stop();
+    console.log('\nAll downloads completed.');
+  } finally {
+    await browser.close();
+  }
+}
+
+async function findVideoUrl(page: Page, videoApiPromise: Promise<Response | null>): Promise<string | null> {
+  const videoResponse = await videoApiPromise;
+  if (videoResponse && videoResponse.ok()) {
+    try {
+      const payload = await videoResponse.json();
+      const fromApi = findFirstMp4(payload);
+      if (fromApi) {
+        return fromApi;
+      }
+    } catch {
+      // Ignore malformed API payloads and continue with fallbacks.
     }
-  };
+  }
 
-  const tasks = uniqueItems.map(item => limit(() => fetchItemTask(item)));
-  await Promise.all(tasks);
+  const fromApollo = await page.evaluate(() => {
+    const appWindow = window as ApolloWindow;
+    if (!appWindow.__APOLLO_STATE__) {
+      return null;
+    }
 
-  multibar.stop();
-  console.log('\n🎉 Bütün indirmeler tamamlandı!');
-  await browser.close();
+    const json = JSON.stringify(appWindow.__APOLLO_STATE__);
+    const match = json.match(/https:\/\/[^"']+\.mp4[^"']*/);
+    return match ? match[0] : null;
+  });
+  if (fromApollo) {
+    return fromApollo;
+  }
+
+  return page.evaluate(() => {
+    const video = document.querySelector('video');
+    if (video && video.src.includes('.mp4')) {
+      return video.src;
+    }
+
+    const source = document.querySelector('video source[type="video/mp4"]');
+    return source ? (source as HTMLSourceElement).src : null;
+  });
+}
+
+function findFirstMp4(value: unknown): string | null {
+  if (typeof value === 'string' && value.includes('.mp4') && value.startsWith('https://')) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const match = findFirstMp4(entry);
+      if (match) {
+        return match;
+      }
+    }
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    for (const nestedValue of Object.values(value)) {
+      const match = findFirstMp4(nestedValue);
+      if (match) {
+        return match;
+      }
+    }
+  }
+
+  return null;
+}
+
+function toSafeCourseraUrl(candidate: string): string | null {
+  try {
+    return validateCourseraUrl(candidate).toString();
+  } catch {
+    return null;
+  }
 }

@@ -9,6 +9,8 @@ coursera_results.json
 api-endpoints.txt
 diagnostic_*.txt
 diagnostic_*.png
+next-data.json
+*.part
 
 # Logs
 *.log

@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     strategy:
       matrix:
@@ -22,6 +24,7 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
     - run: npm ci
+    - run: npm run scan:sensitive
+    - run: npm run lint
     - run: npm run build
-    # Add testing suite in future
-    # - run: npm test
+    - run: npm run audit:prod
