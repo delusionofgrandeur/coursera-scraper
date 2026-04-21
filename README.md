@@ -1,9 +1,11 @@
 # coursera-scraper
 
-A CLI for locally exporting Coursera course materials you are already authorized to access.
+An unofficial Coursera scraper/downloader CLI for Node.js.
 
 This project is unofficial and provided for educational and personal offline-use scenarios only.
 This project is not affiliated with, endorsed by, or sponsored by Coursera.
+
+It uses a locally saved Coursera session, validates `coursera.org/learn/...` URLs, discovers course/module/lesson links, extracts video or reading content, and writes the results to local `downloads/` folders. Internally, it uses Playwright for browser-driven login, navigation, and response interception.
 
 ## Security posture
 

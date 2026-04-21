@@ -1,7 +1,7 @@
 {
   "name": "coursera-scraper",
   "version": "1.0.0",
-  "description": "An unofficial educational-use CLI for exporting Coursera course materials you are authorized to access.",
+  "description": "Unofficial Coursera scraper/downloader CLI for Node.js.",
   "main": "dist/batch-down.js",
   "exports": {
     ".": "./dist/batch-down.js"
@@ -28,10 +28,11 @@
   },
   "keywords": [
     "coursera",
-    "playwright",
-    "cli",
+    "scraper",
     "downloader",
-    "educational"
+    "nodejs",
+    "cli",
+    "typescript"
   ],
   "author": "delusionofgrandeur",
   "license": "MIT",
