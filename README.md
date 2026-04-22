@@ -82,7 +82,7 @@ npm run cli
 coursera-dl
 ```
 
-2. Choose the authentication flow when prompted and sign in through the opened browser.
+2. Choose the authentication flow when prompted, complete the login in the opened Chrome window, and wait for the CLI to confirm that your local session was saved.
 
 3. After login, run the CLI again and paste a course URL such as:
 
@@ -111,6 +111,18 @@ Direct download entry point from a source checkout:
 ```bash
 npm run download "https://www.coursera.org/learn/course-slug/home/welcome"
 ```
+
+Queue commands:
+
+```bash
+coursera-dl queue add "https://www.coursera.org/learn/course-slug/home/welcome" --concurrency 3
+coursera-dl queue list
+coursera-dl queue run
+coursera-dl queue remove QUEUE_ITEM_ID
+coursera-dl queue retry-failed
+```
+
+The persistent queue is stored in `~/.coursera-scraper/queue.json`, so queued links survive restarts.
 
 ## Security posture
 

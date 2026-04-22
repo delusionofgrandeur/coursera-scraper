@@ -1,6 +1,6 @@
 {
   "name": "coursera-scraper",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Unofficial Coursera scraper/downloader CLI for Node.js.",
   "main": "dist/batch-down.js",
   "exports": {
@@ -19,9 +19,10 @@
   "scripts": {
     "build": "rimraf dist && tsc",
     "lint": "eslint \"src/**/*.ts\"",
+    "test": "npm run build && node --test dist/batch-down.test.js dist/queue.test.js",
     "audit:prod": "npm audit --omit=dev",
     "scan:sensitive": "node scripts/scan-sensitive.js",
-    "prepack": "npm run build",
+    "prepack": "npm run build && node -e \"const fs=require('node:fs'); for (const file of fs.readdirSync('dist')) { if (file.endsWith('.test.js')) fs.rmSync('dist/' + file, { force: true }); }\"",
     "prepublishOnly": "npm run scan:sensitive && npm run lint",
     "start": "tsx src/index.ts",
     "auth": "tsx src/auth.ts",
