@@ -1,8 +1,7 @@
-import { chromium, type Page, type Response } from 'playwright';
+import { chromium, type BrowserContext, type Page, type Response } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import pLimit from 'p-limit';
 import cliProgress from 'cli-progress';
 import ora from 'ora';
 import {
@@ -19,16 +18,51 @@ type ApolloWindow = Window & {
   __APOLLO_STATE__?: unknown;
 };
 
-interface CourseItem {
+export interface CourseItem {
   url: string;
   folderName: string;
   order: number;
 }
 
+const MAX_ITEM_ATTEMPTS = 3;
+const MAX_RESOLVER_CONCURRENCY = 3;
+
 export interface BatchDownloadItemFailure {
   url: string;
   message: string;
 }
+
+export interface BatchDownloadPipelineSettings {
+  downloadConcurrency: number;
+  resolverConcurrency: number;
+  bufferSize: number;
+}
+
+export type PreparedDownloadJob =
+  | {
+      kind: 'skip';
+      url: string;
+    }
+  | {
+      kind: 'supplement';
+      url: string;
+      filePath: string;
+      text: string;
+    }
+  | {
+      kind: 'video';
+      url: string;
+      filePath: string;
+      fileNamePrefix: string;
+      videoUrl: string;
+    };
+
+interface CourseItemAttempt {
+  item: CourseItem;
+  attempt: number;
+}
+
+type VideoDownloadJob = Extract<PreparedDownloadJob, { kind: 'video' }> & CourseItemAttempt;
 
 export function assertBatchDownloadAccess(requestedUrl: URL, resolvedUrl: string): void {
   if (requestedUrl.pathname.includes('/home/') && !resolvedUrl.includes('/home/')) {
@@ -58,6 +92,16 @@ export function finalizeBatchDownloadFailures(failures: readonly BatchDownloadIt
   throw new Error(`Download finished with ${failures.length} failed item(s). ${preview}${remainder}`);
 }
 
+export function getBatchDownloadPipelineSettings(effectiveConcurrency: number): BatchDownloadPipelineSettings {
+  const downloadConcurrency = clampConcurrency(effectiveConcurrency);
+
+  return {
+    downloadConcurrency,
+    resolverConcurrency: Math.min(MAX_RESOLVER_CONCURRENCY, downloadConcurrency),
+    bufferSize: downloadConcurrency * 2,
+  };
+}
+
 export async function runBatchDownload(targetUrl: string, concurrency = 3): Promise<void> {
   const validatedTargetUrl = validateCourseraUrl(targetUrl);
   const authPath = getAuthPath();
@@ -76,22 +120,40 @@ export async function runBatchDownload(targetUrl: string, concurrency = 3): Prom
 
   try {
     const context = await browser.newContext({ storageState: authPath });
-    const indexPage = await context.newPage();
+    await runBatchDownloadWithValidatedUrl(validatedTargetUrl, context, effectiveConcurrency, concurrency, scanSpinner);
+  } catch (error) {
+    if (scanSpinner.isSpinning) {
+      const message = error instanceof Error ? error.message : 'Download scan failed.';
+      scanSpinner.fail(chalk.red(message));
+    }
 
+    throw error;
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
+async function runBatchDownloadWithValidatedUrl(
+  validatedTargetUrl: URL,
+  context: BrowserContext,
+  effectiveConcurrency: number,
+  requestedConcurrency: number,
+  scanSpinner: ReturnType<typeof ora>,
+): Promise<void> {
+  const indexPage = await context.newPage();
+
+  try {
     scanSpinner.text = chalk.blueBright('Loading course metadata and compiling module map...');
     await indexPage.goto(validatedTargetUrl.toString(), {
       waitUntil: 'networkidle',
       timeout: 60_000,
     });
-    await indexPage.waitForTimeout(4_000);
+    await waitForCourseContentLinks(indexPage);
 
     const resolvedUrl = indexPage.url();
     assertBatchDownloadAccess(validatedTargetUrl, resolvedUrl);
 
     const items = await collectCourseItems(indexPage);
-
-    await indexPage.close();
-
     const uniqueItems = Array.from(new Map(items.map((item) => [item.url, item])).values());
     assertBatchDownloadItemsFound(uniqueItems);
 
@@ -102,6 +164,7 @@ export async function runBatchDownload(targetUrl: string, concurrency = 3): Prom
       {
         clearOnComplete: false,
         hideCursor: true,
+        noTTYOutput: true,
         format: '{filename} | {bar} | {percentage}% | {value}/{total} bytes | Speed: {speed} | ETA: {eta}s',
         barCompleteChar: '\u2588',
         barIncompleteChar: '\u2591',
@@ -109,55 +172,201 @@ export async function runBatchDownload(targetUrl: string, concurrency = 3): Prom
       cliProgress.Presets.shades_classic,
     );
 
-    const mainBar = multibar.create(uniqueItems.length, 0, {
-      filename: 'overall progress'.padEnd(30, ' '),
-      speed: '-',
-      value: 0,
-      total: uniqueItems.length,
-    });
-    (mainBar as cliProgress.SingleBar & { format?: string }).format =
-      '{filename} | {bar} | {percentage}% | {value}/{total} tasks | ETA: {eta}s';
+    const mainBar = multibar.create(
+      uniqueItems.length,
+      0,
+      {
+        filename: 'overall progress'.padEnd(30, ' '),
+        speed: '-',
+      },
+      {
+        format: '{filename} | {bar} | {percentage}% | {value}/{total} tasks | ETA: {eta}s',
+      },
+    );
 
     const courseSlug = validatedTargetUrl.pathname.split('/')[2] ?? 'course';
     const downloadDir = resolveSafePath(path.join(process.cwd(), 'downloads'), courseSlug);
     ensureDir(downloadDir);
 
-    if (effectiveConcurrency !== concurrency) {
-      console.log(`Using concurrency ${effectiveConcurrency} (requested ${concurrency}).`);
+    if (effectiveConcurrency !== requestedConcurrency) {
+      console.log(`Using concurrency ${effectiveConcurrency} (requested ${requestedConcurrency}).`);
     }
 
-    const limit = pLimit(effectiveConcurrency);
     const failures: BatchDownloadItemFailure[] = [];
-    const tasks = uniqueItems.map((item) =>
-      limit(async () => {
-        const page = await context.newPage();
-
-        try {
-          await processCourseItem(page, item, downloadDir, multibar);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          failures.push({ url: item.url, message });
-          console.error(chalk.red(`Failed to process ${item.url}: ${message}`));
-        } finally {
-          mainBar.increment();
-          await page.close().catch(() => undefined);
-        }
-      }),
-    );
-
-    await Promise.all(tasks);
+    await runDownloadPipeline(context, uniqueItems, downloadDir, effectiveConcurrency, multibar, mainBar, failures);
     multibar.stop();
     finalizeBatchDownloadFailures(failures);
     console.log('\nAll downloads completed.');
-  } catch (error) {
-    if (scanSpinner.isSpinning) {
-      const message = error instanceof Error ? error.message : 'Download scan failed.';
-      scanSpinner.fail(chalk.red(message));
+  } finally {
+    await indexPage.close().catch(() => undefined);
+  }
+}
+
+async function runDownloadPipeline(
+  context: BrowserContext,
+  items: readonly CourseItem[],
+  downloadDir: string,
+  effectiveConcurrency: number,
+  multibar: cliProgress.MultiBar,
+  mainBar: cliProgress.SingleBar,
+  failures: BatchDownloadItemFailure[],
+): Promise<void> {
+  const settings = getBatchDownloadPipelineSettings(effectiveConcurrency);
+  const itemQueue = new AsyncBoundedQueue<CourseItemAttempt>();
+  const downloadQueue = new AsyncBoundedQueue<VideoDownloadJob>(settings.bufferSize);
+  let finalizedItems = 0;
+
+  const finalizeItem = () => {
+    finalizedItems += 1;
+    mainBar.increment(1, {
+      filename: 'overall progress'.padEnd(30, ' '),
+      speed: '-',
+    });
+
+    if (finalizedItems >= items.length) {
+      itemQueue.close();
+      downloadQueue.close();
+    }
+  };
+
+  const retryOrFail = (attempt: CourseItemAttempt, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (attempt.attempt >= MAX_ITEM_ATTEMPTS) {
+      failures.push({ url: attempt.item.url, message });
+      console.error(chalk.red(`Failed to process ${attempt.item.url}: ${message}`));
+      finalizeItem();
+      return;
     }
 
-    throw error;
-  } finally {
-    await browser.close();
+    console.warn(
+      chalk.yellow(
+        `Retrying ${attempt.item.url} after attempt ${attempt.attempt}/${MAX_ITEM_ATTEMPTS} failed: ${message}`,
+      ),
+    );
+
+    void delay(getRetryDelayMs(attempt.attempt))
+      .then(() => itemQueue.push({ item: attempt.item, attempt: attempt.attempt + 1 }))
+      .catch((pushError: unknown) => {
+        const pushMessage = pushError instanceof Error ? pushError.message : String(pushError);
+        failures.push({ url: attempt.item.url, message: pushMessage });
+        console.error(chalk.red(`Failed to retry ${attempt.item.url}: ${pushMessage}`));
+        finalizeItem();
+      });
+  };
+
+  const resolverWorkers = Array.from({ length: settings.resolverConcurrency }, async () => {
+    for (;;) {
+      const attempt = await itemQueue.shift();
+      if (!attempt) {
+        return;
+      }
+
+      let page: Page | null = null;
+      try {
+        page = await context.newPage();
+        const job = await prepareCourseItemJob(page, attempt.item, downloadDir);
+        if (job.kind === 'skip') {
+          finalizeItem();
+          continue;
+        }
+
+        if (job.kind === 'supplement') {
+          fs.writeFileSync(job.filePath, job.text, 'utf-8');
+          finalizeItem();
+          continue;
+        }
+
+        await downloadQueue.push({ ...job, item: attempt.item, attempt: attempt.attempt });
+      } catch (error) {
+        retryOrFail(attempt, error);
+      } finally {
+        await page?.close().catch(() => undefined);
+      }
+    }
+  });
+
+  const downloadWorkers = Array.from({ length: settings.downloadConcurrency }, async () => {
+    for (;;) {
+      const job = await downloadQueue.shift();
+      if (!job) {
+        return;
+      }
+
+      try {
+        await downloadVideoJob(job, multibar);
+        finalizeItem();
+      } catch (error) {
+        retryOrFail(job, error);
+      }
+    }
+  });
+
+  for (const item of items) {
+    await itemQueue.push({ item, attempt: 1 });
+  }
+
+  await Promise.all([...resolverWorkers, ...downloadWorkers]);
+}
+
+class AsyncBoundedQueue<T> {
+  private readonly values: T[] = [];
+  private readonly waitingConsumers: Array<(value: T | null) => void> = [];
+  private readonly waitingProducers: Array<() => void> = [];
+  private isClosed = false;
+
+  constructor(private readonly maxSize = Number.POSITIVE_INFINITY) {}
+
+  async push(value: T): Promise<void> {
+    while (!this.isClosed && this.values.length >= this.maxSize && this.waitingConsumers.length === 0) {
+      await new Promise<void>((resolve) => {
+        this.waitingProducers.push(resolve);
+      });
+    }
+
+    if (this.isClosed) {
+      throw new Error('Cannot add work to a closed queue.');
+    }
+
+    const consumer = this.waitingConsumers.shift();
+    if (consumer) {
+      consumer(value);
+      return;
+    }
+
+    this.values.push(value);
+  }
+
+  async shift(): Promise<T | null> {
+    const value = this.values.shift();
+    if (value) {
+      this.waitingProducers.shift()?.();
+      return value;
+    }
+
+    if (this.isClosed) {
+      return null;
+    }
+
+    return new Promise<T | null>((resolve) => {
+      this.waitingConsumers.push(resolve);
+    });
+  }
+
+  close(): void {
+    if (this.isClosed) {
+      return;
+    }
+
+    this.isClosed = true;
+
+    while (this.waitingConsumers.length > 0) {
+      this.waitingConsumers.shift()?.(null);
+    }
+
+    while (this.waitingProducers.length > 0) {
+      this.waitingProducers.shift()?.();
+    }
   }
 }
 
@@ -206,7 +415,7 @@ async function collectCourseItems(indexPage: Page): Promise<CourseItem[]> {
         waitUntil: 'networkidle',
         timeout: 60_000,
       });
-      await indexPage.waitForTimeout(3_000);
+      await waitForCourseContentLinks(indexPage);
     }
 
     const folderName = `week_${weekIndex.toString().padStart(2, '0')}`;
@@ -233,77 +442,119 @@ async function collectCourseItems(indexPage: Page): Promise<CourseItem[]> {
   return items;
 }
 
-async function processCourseItem(
+async function waitForCourseContentLinks(page: Page): Promise<void> {
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll('a')).some((anchor) => {
+          return (
+            anchor.href.includes('/home/week/') ||
+            anchor.href.includes('/home/module/') ||
+            anchor.href.includes('/lecture/') ||
+            anchor.href.includes('/supplement/') ||
+            anchor.href.includes('/item/')
+          );
+        }),
+      { timeout: 12_000 },
+    )
+    .catch(() => undefined);
+}
+
+export async function prepareCourseItemJob(
   page: Page,
   item: CourseItem,
   downloadDir: string,
-  multibar: cliProgress.MultiBar,
-): Promise<void> {
+): Promise<PreparedDownloadJob> {
   const itemDir = resolveSafePath(downloadDir, item.folderName);
   ensureDir(itemDir);
 
-  const videoApiPromise = page
-    .waitForResponse(
-      (response) =>
-        response.url().includes('onDemandLectureVideos.v1') ||
-        response.url().includes('onDemandVideos.v1'),
-      { timeout: 15_000 },
-    )
-    .catch(() => null);
+  const isVideoItem = item.url.includes('/lecture/') || item.url.includes('/item/');
+  const existingOutputPath = findExistingItemOutputPath(itemDir, item.order, isVideoItem ? '.mp4' : '.txt');
+  if (existingOutputPath) {
+    return { kind: 'skip', url: item.url };
+  }
+
+  const videoApiPromise = isVideoItem ? waitForVideoApiResponse(page) : Promise.resolve(null);
 
   await page.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForTimeout(3_000);
+  await waitForCourseItemHydration(page, isVideoItem);
 
   const pageTitle = sanitizePathSegment((await page.title()).replace(' | Coursera', ''), 'lesson', 50);
   const fileNamePrefix = `${String(item.order).padStart(2, '0')}_${pageTitle}`;
 
-  if (item.url.includes('/lecture/') || item.url.includes('/item/')) {
-    await downloadLectureItem(page, itemDir, fileNamePrefix, videoApiPromise, multibar);
-    return;
+  if (isVideoItem) {
+    const filePath = resolveSafePath(itemDir, `${fileNamePrefix}.mp4`);
+    if (fileExistsWithContent(filePath)) {
+      return { kind: 'skip', url: item.url };
+    }
+
+    const videoUrl = await findVideoUrl(page, videoApiPromise);
+
+    if (!videoUrl) {
+      const notePath = resolveSafePath(itemDir, `${fileNamePrefix}.txt`);
+      fs.writeFileSync(notePath, 'Video URL could not be resolved for this lesson.', 'utf-8');
+      throw new Error('Video URL could not be resolved for this lesson.');
+    }
+
+    return {
+      kind: 'video',
+      url: item.url,
+      filePath,
+      fileNamePrefix,
+      videoUrl,
+    };
   }
 
   if (item.url.includes('/supplement/')) {
-    await writeSupplementItem(page, itemDir, fileNamePrefix);
-    return;
+    const filePath = resolveSafePath(itemDir, `${fileNamePrefix}.txt`);
+    if (fileExistsWithContent(filePath)) {
+      return { kind: 'skip', url: item.url };
+    }
+
+    const readingText = await page.evaluate(() => {
+      const content = document.querySelector('.rc-CML, .rc-ReadingItem, #main, [data-e2e="ReadingItem"]');
+      return content ? (content as HTMLElement).innerText : '';
+    });
+
+    if (!readingText.trim()) {
+      throw new Error('Reading content could not be extracted for this lesson.');
+    }
+
+    return {
+      kind: 'supplement',
+      url: item.url,
+      filePath,
+      text: readingText,
+    };
   }
 
   throw new Error('Unsupported course item type.');
 }
 
-async function downloadLectureItem(
-  page: Page,
-  itemDir: string,
-  fileNamePrefix: string,
-  videoApiPromise: Promise<Response | null>,
-  multibar: cliProgress.MultiBar,
-): Promise<void> {
-  const videoUrl = await findVideoUrl(page, videoApiPromise);
-
-  if (!videoUrl) {
-    const notePath = resolveSafePath(itemDir, `${fileNamePrefix}.txt`);
-    fs.writeFileSync(notePath, 'Video URL could not be resolved for this lesson.', 'utf-8');
-    throw new Error('Video URL could not be resolved for this lesson.');
+async function downloadVideoJob(job: VideoDownloadJob, multibar: cliProgress.MultiBar): Promise<void> {
+  if (fileExistsWithContent(job.filePath)) {
+    return;
   }
 
-  const filePath = resolveSafePath(itemDir, `${fileNamePrefix}.mp4`);
-  const label = fileNamePrefix.slice(0, 27).padEnd(30, ' ');
+  const label = job.fileNamePrefix.slice(0, 27).padEnd(30, ' ');
+  const filename = `video ${label}`;
   const fileBar = multibar.create(1, 0, {
-    filename: `video ${label}`,
+    filename,
     speed: '0 MB/s',
   });
 
-  await downloadToFile(videoUrl, filePath, {
+  await downloadToFile(job.videoUrl, job.filePath, {
     onStart: (totalBytes) => {
       fileBar.setTotal(totalBytes > 0 ? totalBytes : 1);
-      fileBar.update(0, { speed: '0 MB/s' });
+      fileBar.update(0, { filename, speed: '0 MB/s' });
     },
     onProgress: (downloadedBytes, totalBytes, speedLabel) => {
       fileBar.setTotal(totalBytes > 0 ? totalBytes : Math.max(downloadedBytes, 1));
-      fileBar.update(downloadedBytes, { speed: speedLabel });
+      fileBar.update(downloadedBytes, { filename, speed: speedLabel });
     },
     onFinish: (downloadedBytes, totalBytes) => {
       fileBar.setTotal(totalBytes > 0 ? totalBytes : Math.max(downloadedBytes, 1));
-      fileBar.update(totalBytes > 0 ? totalBytes : downloadedBytes, { speed: 'done' });
+      fileBar.update(totalBytes > 0 ? totalBytes : downloadedBytes, { filename, speed: 'done' });
       fileBar.stop();
     },
     onError: () => {
@@ -314,18 +565,26 @@ async function downloadLectureItem(
   });
 }
 
-async function writeSupplementItem(page: Page, itemDir: string, fileNamePrefix: string): Promise<void> {
-  const readingText = await page.evaluate(() => {
-    const content = document.querySelector('.rc-CML, .rc-ReadingItem, #main, [data-e2e="ReadingItem"]');
-    return content ? (content as HTMLElement).innerText : '';
-  });
+function waitForVideoApiResponse(page: Page): Promise<Response | null> {
+  return page
+    .waitForResponse(
+      (response) =>
+        response.url().includes('onDemandLectureVideos.v1') ||
+        response.url().includes('onDemandVideos.v1'),
+      { timeout: 15_000 },
+    )
+    .catch(() => null);
+}
 
-  if (!readingText.trim()) {
-    throw new Error('Reading content could not be extracted for this lesson.');
-  }
+async function waitForCourseItemHydration(page: Page, isVideoItem: boolean): Promise<void> {
+  const selector = isVideoItem
+    ? 'video, video source[type="video/mp4"]'
+    : '.rc-CML, .rc-ReadingItem, #main, [data-e2e="ReadingItem"]';
 
-  const filePath = resolveSafePath(itemDir, `${fileNamePrefix}.txt`);
-  fs.writeFileSync(filePath, readingText, 'utf-8');
+  await Promise.race([
+    page.waitForSelector(selector, { timeout: 2_500 }).catch(() => undefined),
+    page.waitForLoadState('networkidle', { timeout: 2_500 }).catch(() => undefined),
+  ]);
 }
 
 async function findVideoUrl(page: Page, videoApiPromise: Promise<Response | null>): Promise<string | null> {
@@ -399,4 +658,42 @@ function toSafeCourseraUrl(candidate: string): string | null {
   } catch {
     return null;
   }
+}
+
+function fileExistsWithContent(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() && stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function findExistingItemOutputPath(itemDir: string, order: number, extension: '.mp4' | '.txt'): string | null {
+  const prefix = `${String(order).padStart(2, '0')}_`;
+
+  try {
+    const matchingFile = fs
+      .readdirSync(itemDir, { withFileTypes: true })
+      .find((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(extension));
+
+    if (!matchingFile) {
+      return null;
+    }
+
+    const filePath = path.join(itemDir, matchingFile.name);
+    return fileExistsWithContent(filePath) ? filePath : null;
+  } catch {
+    return null;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getRetryDelayMs(attempt: number): number {
+  return attempt * 2_000;
 }
